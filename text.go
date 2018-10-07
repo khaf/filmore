@@ -5,7 +5,9 @@ import (
 
 	"io/ioutil"
 
-	"code.google.com/p/freetype-go/freetype/truetype"
+	"github.com/golang/freetype/truetype"
+	"golang.org/x/image/font"
+	"golang.org/x/image/math/fixed"
 )
 
 // Scaling constant for going from points to pixels.
@@ -73,7 +75,7 @@ func NewFont(fontData []byte, fontSize int) (*Font, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Font{font, truetype.NewGlyphBuf(), ttscale(fontSize)}, nil
+	return &Font{font, &truetype.GlyphBuf{}, ttscale(fontSize)}, nil
 }
 
 func NewFontFromFile(filename string, fontSize int) (*Font, error) {
@@ -84,7 +86,7 @@ func NewFontFromFile(filename string, fontSize int) (*Font, error) {
 	return NewFont(data, fontSize)
 }
 
-func fUnitsToFloat64(x int32) float64 {
+func fUnitsToFloat64(x int) float64 {
 	scaled := x << 2
 	return float64(scaled/256) + float64(scaled%256)/256.0
 }
@@ -93,7 +95,7 @@ func fUnitsToFloat64(x int32) float64 {
 // The returned value is the same thing measured in floating point and positive Y
 // going downwards.
 func pointToF64Point(p truetype.Point) (x, y float64) {
-	return fUnitsToFloat64(p.X), -fUnitsToFloat64(p.Y)
+	return fUnitsToFloat64(p.X.Round()), -fUnitsToFloat64(p.Y.Round())
 }
 
 func (textPath *TextPath) appendContour(ps []truetype.Point, dx, dy float64) {
@@ -132,12 +134,12 @@ func (textPath *TextPath) appendContour(ps []truetype.Point, dx, dy float64) {
 }
 
 func (f *Font) appendGlyphPath(glyph truetype.Index, dx, dy float64, textPath *TextPath) error {
-	if err := f.glyphBuf.Load(f.font, f.scale, glyph, truetype.NoHinting); err != nil {
+	if err := f.glyphBuf.Load(f.font, fixed.I(int(f.scale)), glyph, font.HintingNone); err != nil {
 		return err
 	}
 	e0 := 0
-	for _, e1 := range f.glyphBuf.End {
-		textPath.appendContour(f.glyphBuf.Point[e0:e1], dx, dy)
+	for _, e1 := range f.glyphBuf.Ends {
+		textPath.appendContour(f.glyphBuf.Points[e0:e1], dx, dy)
 		e0 = e1
 	}
 	return nil
@@ -156,14 +158,15 @@ func (f *Font) CreateTextPath(s string, x, y float64) TextPath {
 	for _, rune := range s {
 		index := f.font.Index(rune)
 		if hasPrev {
-			x += fUnitsToFloat64(f.font.Kerning(f.scale, prev, index))
+			// x += fUnitsToFloat64(f.font.Kerning(f.scale, prev, index))
+			x += fUnitsToFloat64(f.font.Kern(fixed.I(int(f.scale)), prev, index).Round())
 		}
 		err := f.appendGlyphPath(index, x, y, &result)
 		if err != nil {
 			log.Println(err)
 			return result
 		}
-		x += fUnitsToFloat64(f.font.HMetric(f.scale, index).AdvanceWidth)
+		x += fUnitsToFloat64(f.font.HMetric(fixed.I(int(f.scale)), index).AdvanceWidth.Round())
 		result.Width = x - startx
 		prev, hasPrev = index, true
 	}
